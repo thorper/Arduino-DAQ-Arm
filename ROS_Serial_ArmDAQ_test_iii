@@ -1,0 +1,108 @@
+/* 
+ * rosserial ADC Example
+ * 
+ * This is a poor man's Oscilloscope.  It does not have the sampling 
+ * rate or accuracy of a commerical scope, but it is great to get
+ * an analog value into ROS in a pinch.
+ * 
+ */
+
+#if (ARDUINO >= 100)
+ #include <Arduino.h>
+#else
+ #include <WProgram.h>
+#endif
+#include <ros.h>
+#include <trims/AAS.h>
+#include <ros/time.h>
+#include <std_msgs/Time.h>
+
+ros::NodeHandle nh;
+
+std_msgs::Time timeNow;
+trims::AAS arm_msg;
+/////////////ARM NAME//////////////
+ros::Publisher p("arm_2", &arm_msg);
+
+const byte interruptPin = 2;
+volatile unsigned long rise_t = 0;
+volatile unsigned long rise_old =0;
+volatile unsigned long dt =0;
+volatile int RPM;
+volatile int nPoles = 8;
+
+///////////Debug//////////
+//  Debug arduino = 1
+//  Publish ROS messages = 0
+bool db = 0; 
+
+
+void setup()
+{ 
+  pinMode(13, OUTPUT);
+  pinMode(interruptPin, INPUT_PULLUP);
+  nh.initNode();
+  attachInterrupt(digitalPinToInterrupt(interruptPin), whatTime, RISING);
+  nh.advertise(p);
+  
+  //Debug choice
+  if (db == 1){
+    nh.getHardware()->setBaud(115200);
+    Serial.begin(57600);
+  }
+
+}
+
+//We average the analog reading to elminate some of the noise
+int averageAnalog(int pin){
+  int v=0;
+  int n = 10; //number of samples to average
+  for(int i=0; i<n; i++) v+= analogRead(pin);
+  return v/n;
+}
+
+
+void loop()
+{
+  arm_msg.header.stamp = nh.now();
+  arm_msg.header.frame_id = "motors";
+  arm_msg.ethrust = averageAnalog(0);
+  arm_msg.thrust = averageAnalog(1);
+  arm_msg.voltage = averageAnalog(2);
+  arm_msg.current = averageAnalog(3);
+  arm_msg.rpm = RPM;
+
+  p.publish(&arm_msg);
+  nh.spinOnce();
+  
+    //Debug choice
+    if (db == 1){
+      Serial.print(" eT: ");
+      Serial.print(arm_msg.ethrust);
+      Serial.print(" T: ");
+      Serial.print(arm_msg.thrust);
+      Serial.print(" V: ");
+      Serial.print(arm_msg.voltage);
+      Serial.print(" A: ");
+      Serial.print(arm_msg.current);
+      Serial.print(" RPM: ");
+      Serial.print(arm_msg.rpm);
+      Serial.print(" rise_t: ");
+      Serial.print(rise_t);
+      Serial.print(" rise_old: ");
+      Serial.print(rise_old);
+      Serial.print(" dt: ");
+      Serial.println(dt);
+    }
+  
+}
+
+//Callback that calculates time between each square wave pulse 
+void whatTime(){
+  //use micros() for >100 hz may overrun for slower frequencies
+  //use millis() for <100 hz accuracy suffers vs micros() but no overflow
+  rise_t = micros(); //watch out micros() may overrun for large delays.
+  dt = rise_t - rise_old;
+  RPM = dt;
+  rise_old = rise_t;
+}
